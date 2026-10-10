@@ -7,6 +7,7 @@ import '../models/sensor_data.dart';
 import '../widgets/battery_visualizer.dart';
 import '../widgets/soil_visualizer.dart';
 import '../widgets/sensor_chart.dart';
+import 'led_controller_screen.dart';
 
 class VisualisationsScreen extends StatefulWidget {
   final BluetoothDevice? device;
@@ -291,6 +292,21 @@ class _VisualisationsScreenState extends State<VisualisationsScreen> with Single
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.grid_view_rounded),
+            tooltip: 'LED Matrix Controller',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => LedControllerScreen(
+                    device: widget.device,
+                    displayName: widget.displayName,
+                    isStandaloneDemo: widget.isStandaloneDemo,
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.tune),
             tooltip: 'Sensor Calibration Options',

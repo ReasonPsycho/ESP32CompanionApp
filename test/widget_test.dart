@@ -12,10 +12,14 @@ import 'package:flutter_blue_plus_platform_interface/flutter_blue_plus_platform_
 import 'package:flutter_test/flutter_test.dart';
 import 'package:esp32_project_cotroller/main.dart';
 import 'package:esp32_project_cotroller/models/sensor_data.dart';
+import 'package:esp32_project_cotroller/models/led_matrix_data.dart';
 import 'package:esp32_project_cotroller/widgets/battery_visualizer.dart';
 import 'package:esp32_project_cotroller/widgets/soil_visualizer.dart';
 import 'package:esp32_project_cotroller/widgets/sensor_chart.dart';
+import 'package:esp32_project_cotroller/widgets/led_matrix_display.dart';
+import 'package:esp32_project_cotroller/widgets/gamepad_controller.dart';
 import 'package:esp32_project_cotroller/screens/visualisations_screen.dart';
+import 'package:esp32_project_cotroller/screens/led_controller_screen.dart';
 
 final class FakeFlutterBluePlusPlatform extends FlutterBluePlusPlatform {
   final StreamController<BmBluetoothAdapterState> _adapterStateController =
@@ -406,5 +410,182 @@ void main() {
     expect(find.text('Visualisations'), findsOneWidget);
     expect(find.text('Services & GATT'), findsOneWidget);
     expect(find.text('Console Log'), findsOneWidget);
+  });
+
+  test('LedMatrixData parses JSON status and matrix frame correctly', () {
+    final ledData = LedMatrixData();
+    const statusJson = '{"game":1,"auto":true,"speed":350,"bright":25,"score":450,"lines":4,"run":true,"bat":92,"cur":340,"max_cur":1000,"pwr_lim":false}';
+    expect(ledData.parseFromStatusJson(statusJson), isTrue);
+    expect(ledData.activeGame, equals(1));
+    expect(ledData.isAuto, isTrue);
+    expect(ledData.speedMs, equals(350));
+    expect(ledData.brightness, equals(25));
+    expect(ledData.score, equals(450));
+    expect(ledData.lines, equals(4));
+    expect(ledData.isRunning, isTrue);
+    expect(ledData.batteryPercent, equals(92));
+    expect(ledData.estimatedCurrentMa, equals(340));
+    expect(ledData.maxCurrentMa, equals(1000));
+    expect(ledData.isPowerLimited, isFalse);
+
+    // Test matrix frame bytes parsing
+    final dummyFrame = List.generate(64, (i) => 0xE0); // Red
+    expect(ledData.parseFromMatrixFrameBytes(dummyFrame), isTrue);
+    expect(ledData.pixels[0].r, greaterThan(0.9));
+
+    // Test matrix frame packing to bytes and hex
+    final packedBytes = ledData.toMatrixFrameBytes();
+    expect(packedBytes.length, equals(64));
+    expect(packedBytes[0], equals(0xE0)); // R:3 bits (111), G:3 bits (000), B:2 bits (00) -> 0xE0
+    final hexString = ledData.toMatrixFrameHex();
+    expect(hexString.length, equals(128));
+    expect(hexString.startsWith('E0'), isTrue);
+  });
+
+  test('LedMatrixData enforces 1.0A power calculation and clamping', () {
+    final ledData = LedMatrixData(brightness: 255, isRunning: true);
+    // Fill all 64 pixels with full white
+    ledData.pixels = List.generate(64, (_) => const Color(0xFFFFFFFF));
+    final current = ledData.computeEstimatedCurrentMa();
+    // Peak theoretical for 64 white LEDs at 255 would be ~3900mA, clamped to maxCurrentMa (1000mA)
+    expect(current, equals(1000));
+    expect(current, lessThanOrEqualTo(LedMatrixData.hardPowerLimitMa));
+
+    // When LEDs are dark or display is paused
+    ledData.isRunning = false;
+    expect(ledData.computeEstimatedCurrentMa(), equals(64)); // baseline quiescent
+  });
+
+  testWidgets('GamepadController renders power monitor and current draw', (WidgetTester tester) async {
+    final ledData = LedMatrixData.sample();
+    ledData.estimatedCurrentMa = 380;
+    ledData.maxCurrentMa = 1000;
+    ledData.isPowerLimited = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GamepadController(
+            data: ledData,
+            onSendCommand: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Current Draw: 380 mA / 1000 mA'), findsOneWidget);
+    expect(find.textContaining('1.0A Safe'), findsOneWidget);
+    expect(find.textContaining('Hardware protection ceiling strictly enforced at 1.0A'), findsOneWidget);
+  });
+
+  testWidgets('LedMatrixDisplay renders canvas and supports drawing', (WidgetTester tester) async {
+    final ledData = LedMatrixData.sample();
+    int? drawnX;
+    int? drawnY;
+    Color? drawnColor;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LedMatrixDisplay(
+            data: ledData,
+            isInteractiveDraw: true,
+            selectedDrawColor: const Color(0xFFFF0000),
+            onPixelDrawn: (x, y, color) {
+              drawnX = x;
+              drawnY = y;
+              drawnColor = color;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LedMatrixDisplay), findsOneWidget);
+    expect(find.byType(CustomPaint), findsWidgets);
+
+    // Tap on top left corner (pixel 0,0)
+    await tester.tapAt(tester.getTopLeft(find.byType(CustomPaint).first) + const Offset(15, 15));
+    await tester.pumpAndSettle();
+
+    expect(drawnX, equals(0));
+    expect(drawnY, equals(0));
+    expect(drawnColor, equals(const Color(0xFFFF0000)));
+  });
+
+  testWidgets('GamepadController dispatches mode and action commands', (WidgetTester tester) async {
+    final ledData = LedMatrixData.sample();
+    final List<String> sentCommands = [];
+    bool boardSent = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GamepadController(
+            data: ledData,
+            onSendCommand: (cmd) => sentCommands.add(cmd),
+            onSendBoard: () => boardSent = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Verify chips
+    expect(find.text("Conway's Life"), findsOneWidget);
+    expect(find.text("Tetris (AI)"), findsOneWidget);
+    expect(find.text("Rainbow Wave"), findsOneWidget);
+    expect(find.text("Drawing Canvas"), findsOneWidget);
+
+    // Tap Reset Board in AI Tetris Card
+    await tester.tap(find.text('Reset Board'));
+    await tester.pumpAndSettle();
+    expect(sentCommands, contains('RESET'));
+
+    // Tap Mode Chip for Game of Life
+    await tester.tap(find.text("Conway's Life"));
+    await tester.pumpAndSettle();
+    expect(sentCommands, contains('GAME:0'));
+
+    // Test Custom Command Console
+    final cmdInput = find.widgetWithText(TextField, 'e.g. SPEED:250, GLIDER, BRIGHT:100');
+    expect(cmdInput, findsOneWidget);
+    await tester.enterText(cmdInput, 'SPEED:180');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Send'));
+    await tester.pumpAndSettle();
+    expect(sentCommands, contains('SPEED:180'));
+
+    // Tap preset chip 'GLIDER'
+    await tester.tap(find.widgetWithText(ActionChip, 'GLIDER'));
+    await tester.pumpAndSettle();
+    expect(sentCommands, contains('GLIDER'));
+
+    // Switch to Drawing Canvas mode and verify 'Send to Matrix'
+    await tester.tap(find.text("Drawing Canvas"));
+    await tester.pumpAndSettle();
+    expect(sentCommands, contains('GAME:3'));
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Send to Matrix'));
+    await tester.pumpAndSettle();
+    expect(boardSent, isTrue);
+  });
+
+  testWidgets('LedControllerScreen renders in standalone simulation mode', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: LedControllerScreen(
+          isStandaloneDemo: true,
+          displayName: 'LED Demo Test',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('LED Demo Test'), findsOneWidget);
+    expect(find.text('Interactive Simulation Mode'), findsOneWidget);
+    expect(find.byType(LedMatrixDisplay), findsOneWidget);
+    expect(find.byType(GamepadController), findsOneWidget);
   });
 }

@@ -7,6 +7,7 @@ import 'widgets/battery_visualizer.dart';
 import 'widgets/soil_visualizer.dart';
 import 'widgets/sensor_chart.dart';
 import 'screens/visualisations_screen.dart';
+import 'screens/led_controller_screen.dart';
 
 void main() {
   // Set FlutterBluePlus log level if needed
@@ -140,14 +141,27 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
         .toLowerCase();
     final hasSensorUuid = result.advertisementData.serviceUuids.any((uuid) {
       final s = uuid.str128.toLowerCase();
-      return s.contains('4fafc201') || s.contains('180f');
+      return s.contains('4fafc201') || s.contains('180f') || s.contains('8411e2dc');
     });
     return name.contains('xiao') ||
         name.contains('esp32') ||
         name.contains('c5') ||
         name.contains('seeed') ||
         name.contains('soil') ||
+        name.contains('led') ||
         hasSensorUuid;
+  }
+
+  bool _isLedMatrixDevice(ScanResult result) {
+    final name = (result.device.platformName.isNotEmpty
+            ? result.device.platformName
+            : result.advertisementData.advName)
+        .toLowerCase();
+    final hasLedUuid = result.advertisementData.serviceUuids.any((uuid) {
+      final s = uuid.str128.toLowerCase();
+      return s.contains('8411e2dc');
+    });
+    return name.contains('led') || name.contains('matrix') || hasLedUuid;
   }
 
   List<ScanResult> get _filteredScanResults {
@@ -222,6 +236,20 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.grid_view_rounded),
+            tooltip: 'LED Matrix Demo',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const LedControllerScreen(
+                    isStandaloneDemo: true,
+                    displayName: 'LED Matrix Simulator Demo',
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.analytics_outlined),
             tooltip: 'Visualisations Demo',
@@ -322,6 +350,15 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
                 ),
                 const Spacer(),
                 ActionChip(
+                  avatar: const Icon(Icons.grid_view_rounded, size: 16),
+                  label: const Text('LED Matrix'),
+                  onPressed: () {
+                    _searchController.text = 'led';
+                    setState(() => _searchFilter = 'led');
+                  },
+                ),
+                const SizedBox(width: 6),
+                ActionChip(
                   avatar: const Icon(Icons.memory, size: 16),
                   label: const Text('XIAO / ESP32'),
                   onPressed: () {
@@ -371,6 +408,7 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
                     itemBuilder: (context, index) {
                       final result = _filteredScanResults[index];
                       final isEsp = _isEsp32Device(result);
+                      final isLed = _isLedMatrixDevice(result);
                       final deviceName = result.device.platformName.isNotEmpty
                           ? result.device.platformName
                           : (result.advertisementData.advName.isNotEmpty
@@ -381,20 +419,31 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
                         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
-                          side: isEsp
-                              ? BorderSide(color: theme.colorScheme.primary, width: 1.5)
+                          side: (isEsp || isLed)
+                              ? BorderSide(
+                                  color: isLed
+                                      ? Colors.tealAccent
+                                      : theme.colorScheme.primary,
+                                  width: 1.5,
+                                )
                               : BorderSide.none,
                         ),
                         child: ListTile(
                           leading: CircleAvatar(
-                            backgroundColor: isEsp
-                                ? theme.colorScheme.primaryContainer
-                                : theme.colorScheme.surfaceContainerHighest,
+                            backgroundColor: isLed
+                                ? const Color(0xFF004D40)
+                                : (isEsp
+                                    ? theme.colorScheme.primaryContainer
+                                    : theme.colorScheme.surfaceContainerHighest),
                             child: Icon(
-                              isEsp ? Icons.memory : Icons.bluetooth,
-                              color: isEsp
-                                  ? theme.colorScheme.onPrimaryContainer
-                                  : theme.colorScheme.onSurfaceVariant,
+                              isLed
+                                  ? Icons.grid_view_rounded
+                                  : (isEsp ? Icons.memory : Icons.bluetooth),
+                              color: isLed
+                                  ? Colors.tealAccent
+                                  : (isEsp
+                                      ? theme.colorScheme.onPrimaryContainer
+                                      : theme.colorScheme.onSurfaceVariant),
                             ),
                           ),
                           title: Row(
@@ -403,11 +452,28 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
                                 child: Text(
                                   deviceName,
                                   style: TextStyle(
-                                    fontWeight: isEsp ? FontWeight.bold : FontWeight.w500,
+                                    fontWeight: (isEsp || isLed) ? FontWeight.bold : FontWeight.w500,
                                   ),
                                 ),
                               ),
-                              if (isEsp)
+                              if (isLed)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00838F),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text(
+                                    'LED MATRIX',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                )
+                              else if (isEsp)
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 6, vertical: 2),
@@ -459,17 +525,36 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
                               ),
                             ],
                           ),
-                          trailing: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: isEsp
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.secondaryContainer,
-                              foregroundColor: isEsp
-                                  ? theme.colorScheme.onPrimary
-                                  : theme.colorScheme.onSecondaryContainer,
-                            ),
-                            onPressed: () => _navigateToDevice(result.device, deviceName),
-                            child: const Text('Connect'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isLed)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 6.0),
+                                  child: ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF00838F),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    ),
+                                    onPressed: () => _navigateToLed(result.device, deviceName),
+                                    icon: const Icon(Icons.gamepad, size: 16),
+                                    label: const Text('LED Controls'),
+                                  ),
+                                ),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: (isEsp || isLed)
+                                      ? theme.colorScheme.primary
+                                      : theme.colorScheme.secondaryContainer,
+                                  foregroundColor: (isEsp || isLed)
+                                      ? theme.colorScheme.onPrimary
+                                      : theme.colorScheme.onSecondaryContainer,
+                                ),
+                                onPressed: () => _navigateToDevice(result.device, deviceName),
+                                child: const Text('Connect'),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -491,6 +576,18 @@ class _BleScannerScreenState extends State<BleScannerScreen> {
     if (rssi >= -75) return Colors.lightGreen;
     if (rssi >= -85) return Colors.orange;
     return Colors.red;
+  }
+
+  void _navigateToLed(BluetoothDevice device, String displayName) {
+    _stopScan();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => LedControllerScreen(
+          device: device,
+          displayName: displayName,
+        ),
+      ),
+    );
   }
 
   void _navigateToDevice(BluetoothDevice device, String displayName) {
@@ -886,6 +983,21 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             ],
           ),
           actions: [
+            if (isConnected)
+              IconButton(
+                icon: const Icon(Icons.grid_view_rounded),
+                tooltip: 'LED Matrix Controller',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => LedControllerScreen(
+                        device: widget.device,
+                        displayName: widget.displayName,
+                      ),
+                    ),
+                  );
+                },
+              ),
             if (isConnected)
               IconButton(
                 icon: const Icon(Icons.tune),
